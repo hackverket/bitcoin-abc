@@ -71,3 +71,27 @@ void GlobalConfig::SetExcessUTXOCharge(Amount fee) {
 Amount GlobalConfig::GetExcessUTXOCharge() const {
     return excessUTXOCharge;
 }
+
+void GlobalConfig::SetMinFeePerKB(CFeeRate fee) {
+    feePerKB = fee;
+}
+
+CFeeRate GlobalConfig::GetMinFeePerKB() const {
+    return feePerKB;
+}
+
+void GlobalConfig::SetRPCUserAndPassword(std::string userAndPassword) {
+    rpcUserAndPassword = userAndPassword;
+}
+
+std::string GlobalConfig::GetRPCUserAndPassword() const {
+    return rpcUserAndPassword;
+}
+
+void GlobalConfig::SetRPCCORSDomain(std::string corsDomain) {
+    rpcCORSDomain = corsDomain;
+}
+
+std::string GlobalConfig::GetRPCCORSDomain() const {
+    return rpcCORSDomain;
+}

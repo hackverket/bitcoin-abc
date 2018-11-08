@@ -25,6 +25,7 @@ Bitcoin ABC Release Process
     - Testnet should be set some tens of thousands back from the tip due to reorgs there.
     - This update should be reviewed with a reindex-chainstate with assumevalid=0 to catch any defect
       that causes rejection of blocks in the past history.
+    - Regenerate manpages (run contrib/devtools/gen-manpages.sh).
 
 4. Increment version number in:
     - doc/Doxyfile
@@ -39,16 +40,18 @@ Bitcoin ABC Release Process
 
 
 ## Release
-    
+
 6. Create Gitian Builds (see doc/gitian-building.md), notify PPA buildmaster to start creating Ubuntu PPAs
-    
+
 7. Verify matching gitian builds, gather signatures
 
 8. Upload gitian build to [bitcoinabc.org](https://download.bitcoinabc.org/)
 
 9. Re-verify the uploads (make sure that downloading them, their checksums are ok)
 
-10. Create a [GitHub release](https://github.com/Bitcoin-ABC/bitcoin-abc/releases) 
+10. Create a [GitHub release](https://github.com/Bitcoin-ABC/bitcoin-abc/releases).
+    The Github release name should be the same as the tag (without the prepended 'v'), and
+    the contents of the release notes should be copied from release-notes.md.
 
 
 ## After Release

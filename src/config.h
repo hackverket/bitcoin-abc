@@ -6,6 +6,7 @@
 #define BITCOIN_CONFIG_H
 
 #include "amount.h"
+#include "feerate.h"
 
 #include <boost/noncopyable.hpp>
 
@@ -28,6 +29,14 @@ public:
 
     virtual void SetExcessUTXOCharge(Amount amt) = 0;
     virtual Amount GetExcessUTXOCharge() const = 0;
+
+    virtual void SetMinFeePerKB(CFeeRate amt) = 0;
+    virtual CFeeRate GetMinFeePerKB() const = 0;
+
+    virtual void SetRPCUserAndPassword(std::string userAndPassword) = 0;
+    virtual std::string GetRPCUserAndPassword() const = 0;
+    virtual void SetRPCCORSDomain(std::string corsDomain) = 0;
+    virtual std::string GetRPCCORSDomain() const = 0;
 };
 
 class GlobalConfig final : public Config {
@@ -44,9 +53,18 @@ public:
     void SetExcessUTXOCharge(Amount) override;
     Amount GetExcessUTXOCharge() const override;
 
+    void SetMinFeePerKB(CFeeRate amt) override;
+    CFeeRate GetMinFeePerKB() const override;
+
+    void SetRPCUserAndPassword(std::string userAndPassword) override;
+    std::string GetRPCUserAndPassword() const override;
+    void SetRPCCORSDomain(std::string corsDomain) override;
+    std::string GetRPCCORSDomain() const override;
+
 private:
     bool useCashAddr;
     Amount excessUTXOCharge;
+    CFeeRate feePerKB;
 };
 
 // Dummy for subclassing in unittests
@@ -68,7 +86,17 @@ public:
     bool UseCashAddrEncoding() const override { return false; }
 
     void SetExcessUTXOCharge(Amount amt) override {}
-    Amount GetExcessUTXOCharge() const override { return Amount(0); }
+    Amount GetExcessUTXOCharge() const override { return Amount::zero(); }
+
+    void SetMinFeePerKB(CFeeRate amt) override{};
+    CFeeRate GetMinFeePerKB() const override {
+        return CFeeRate(Amount::zero());
+    }
+
+    void SetRPCUserAndPassword(std::string userAndPassword) override{};
+    std::string GetRPCUserAndPassword() const override { return ""; };
+    void SetRPCCORSDomain(std::string corsDomain) override{};
+    std::string GetRPCCORSDomain() const override { return ""; };
 
 private:
     std::unique_ptr<CChainParams> chainParams;

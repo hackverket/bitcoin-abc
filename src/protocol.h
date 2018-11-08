@@ -69,7 +69,7 @@ public:
     }
 
     MessageMagic pchMessageStart;
-    char pchCommand[COMMAND_SIZE];
+    std::array<char, COMMAND_SIZE> pchCommand;
     uint32_t nMessageSize;
     uint8_t pchChecksum[CHECKSUM_SIZE];
 };
@@ -305,6 +305,43 @@ enum ServiceFlags : uint64_t {
 };
 
 /**
+ * Gets the set of service flags which are "desirable" for a given peer.
+ *
+ * These are the flags which are required for a peer to support for them
+ * to be "interesting" to us, ie for us to wish to use one of our few
+ * outbound connection slots for or for us to wish to prioritize keeping
+ * their connection around.
+ *
+ * Relevant service flags may be peer- and state-specific in that the
+ * version of the peer may determine which flags are required (eg in the
+ * case of NODE_NETWORK_LIMITED where we seek out NODE_NETWORK peers
+ * unless they set NODE_NETWORK_LIMITED and we are out of IBD, in which
+ * case NODE_NETWORK_LIMITED suffices).
+ *
+ * Thus, generally, avoid calling with peerServices == NODE_NONE.
+ */
+static ServiceFlags GetDesirableServiceFlags(ServiceFlags services) {
+    return ServiceFlags(NODE_NETWORK);
+}
+
+/**
+ * A shortcut for (services & GetDesirableServiceFlags(services))
+ * == GetDesirableServiceFlags(services), ie determines whether the given
+ * set of service flags are sufficient for a peer to be "relevant".
+ */
+static inline bool HasAllDesirableServiceFlags(ServiceFlags services) {
+    return !(GetDesirableServiceFlags(services) & (~services));
+}
+
+/**
+ * Checks if a peer with the given service flags may be capable of having a
+ * robust address-storage DB. Currently an alias for checking NODE_NETWORK.
+ */
+static inline bool MayHaveUsefulAddressDB(ServiceFlags services) {
+    return services & NODE_NETWORK;
+}
+
+/**
  * A CService with information about it as peer.
  */
 class CAddress : public CService {
@@ -339,7 +376,6 @@ public:
 };
 
 /** getdata message type flags */
-const uint32_t MSG_EXT_FLAG = 1 << 29;
 const uint32_t MSG_TYPE_MASK = 0xffffffff >> 3;
 
 /** getdata / inv message types.
@@ -355,17 +391,18 @@ enum GetDataMsg {
     MSG_FILTERED_BLOCK = 3,
     //!< Defined in BIP152
     MSG_CMPCT_BLOCK = 4,
-
-    //!< Extension block
-    MSG_EXT_TX = MSG_TX | MSG_EXT_FLAG,
-    MSG_EXT_BLOCK = MSG_BLOCK | MSG_EXT_FLAG,
 };
 
 /** inv message data */
 class CInv {
 public:
-    CInv();
-    CInv(int typeIn, const uint256 &hashIn);
+    // TODO: make private (improves encapsulation)
+    uint32_t type;
+    uint256 hash;
+
+public:
+    CInv() : type(0), hash() {}
+    CInv(uint32_t typeIn, const uint256 &hashIn) : type(typeIn), hash(hashIn) {}
 
     ADD_SERIALIZE_METHODS;
 
@@ -375,7 +412,9 @@ public:
         READWRITE(hash);
     }
 
-    friend bool operator<(const CInv &a, const CInv &b);
+    friend bool operator<(const CInv &a, const CInv &b) {
+        return a.type < b.type || (a.type == b.type && a.hash < b.hash);
+    }
 
     std::string GetCommand() const;
     std::string ToString() const;
@@ -392,11 +431,6 @@ public:
         return k == MSG_BLOCK || k == MSG_FILTERED_BLOCK ||
                k == MSG_CMPCT_BLOCK;
     }
-
-    // TODO: make private (improves encapsulation)
-public:
-    int type;
-    uint256 hash;
 };
 
 #endif // BITCOIN_PROTOCOL_H

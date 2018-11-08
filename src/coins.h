@@ -86,7 +86,7 @@ public:
      * implementation.
      */
     size_t operator()(const COutPoint &outpoint) const {
-        return SipHashUint256Extra(k0, k1, outpoint.hash, outpoint.n);
+        return SipHashUint256Extra(k0, k1, outpoint.GetTxId(), outpoint.GetN());
     }
 };
 
@@ -304,6 +304,9 @@ void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight,
               bool check = false);
 
 //! Utility function to find any unspent output with a given txid.
-const Coin &AccessByTxid(const CCoinsViewCache &cache, const uint256 &txid);
+// This function can be quite expensive because in the event of a transaction
+// which is not found in the cache, it can cause up to MAX_OUTPUTS_PER_BLOCK
+// lookups to database, so it should be used with care.
+const Coin &AccessByTxid(const CCoinsViewCache &cache, const TxId &txid);
 
 #endif // BITCOIN_COINS_H

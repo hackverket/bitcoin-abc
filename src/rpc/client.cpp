@@ -107,9 +107,6 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"keypoolrefill", 0, "newsize"},
     {"getrawmempool", 0, "verbose"},
     {"estimatefee", 0, "nblocks"},
-    {"estimatepriority", 0, "nblocks"},
-    {"estimatesmartfee", 0, "nblocks"},
-    {"estimatesmartpriority", 0, "nblocks"},
     {"prioritisetransaction", 1, "priority_delta"},
     {"prioritisetransaction", 2, "fee_delta"},
     {"setban", 2, "bantime"},
@@ -129,6 +126,8 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"echojson", 7, "arg7"},
     {"echojson", 8, "arg8"},
     {"echojson", 9, "arg9"},
+    {"rescanblockchain", 0, "start_height"},
+    {"rescanblockchain", 1, "stop_height"},
 };
 
 class CRPCConvertTable {
