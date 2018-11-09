@@ -28,6 +28,7 @@
 #include "netbase.h"
 #include "policy/policy.h"
 #include "rpc/register.h"
+#include "rpc/safemode.h"
 #include "rpc/server.h"
 #include "scheduler.h"
 #include "script/scriptcache.h"
@@ -43,6 +44,7 @@
 #include "validation.h"
 #include "validationinterface.h"
 #ifdef ENABLE_WALLET
+#include "wallet/init.h"
 #include "wallet/rpcdump.h"
 #include "wallet/wallet.h"
 #endif
@@ -57,7 +59,6 @@
 #endif
 
 #include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/bind.hpp>
@@ -71,7 +72,6 @@
 bool fFeeEstimatesInitialized = false;
 static const bool DEFAULT_PROXYRANDOMIZE = true;
 static const bool DEFAULT_REST_ENABLE = false;
-static const bool DEFAULT_DISABLE_SAFEMODE = false;
 static const bool DEFAULT_STOPAFTERBLOCKIMPORT = false;
 
 std::unique_ptr<CConnman> g_connman;
@@ -155,8 +155,7 @@ public:
     // the caller.
 };
 
-static CCoinsViewDB *pcoinsdbview = nullptr;
-static CCoinsViewErrorCatcher *pcoinscatcher = nullptr;
+static std::unique_ptr<CCoinsViewErrorCatcher> pcoinscatcher;
 static std::unique_ptr<ECCVerifyHandle> globalVerifyHandle;
 
 void Interrupt(boost::thread_group &threadGroup) {
@@ -224,19 +223,31 @@ void Shutdown() {
         fFeeEstimatesInitialized = false;
     }
 
+    // FlushStateToDisk generates a SetBestChain callback, which we should avoid
+    // missing
+    if (pcoinsTip != nullptr) {
+        FlushStateToDisk();
+    }
+
+    // After there are no more peers/RPC left to give us new data which may
+    // generate CValidationInterface callbacks, flush them...
+    GetMainSignals().FlushBackgroundCallbacks();
+
+    // Any future callbacks will be dropped. This should absolutely be safe - if
+    // missing a callback results in an unrecoverable situation, unclean
+    // shutdown would too. The only reason to do the above flushes is to let the
+    // wallet catch up with our current chain to avoid any strange pruning edge
+    // cases and make next startup faster by avoiding rescan.
+
     {
         LOCK(cs_main);
         if (pcoinsTip != nullptr) {
             FlushStateToDisk();
         }
-        delete pcoinsTip;
-        pcoinsTip = nullptr;
-        delete pcoinscatcher;
-        pcoinscatcher = nullptr;
-        delete pcoinsdbview;
-        pcoinsdbview = nullptr;
-        delete pblocktree;
-        pblocktree = nullptr;
+        pcoinsTip.reset();
+        pcoinscatcher.reset();
+        pcoinsdbview.reset();
+        pblocktree.reset();
     }
 #ifdef ENABLE_WALLET
     for (CWalletRef pwallet : vpwallets) {
@@ -260,6 +271,7 @@ void Shutdown() {
     }
 #endif
     UnregisterAllValidationInterfaces();
+    GetMainSignals().UnregisterBackgroundSignalScheduler();
 #ifdef ENABLE_WALLET
     for (CWalletRef pwallet : vpwallets) {
         delete pwallet;
@@ -279,7 +291,7 @@ void HandleSIGTERM(int) {
 }
 
 void HandleSIGHUP(int) {
-    GetLogger().fReopenDebugLog = true;
+    GetLogger().m_reopen_file = true;
 }
 
 void OnRPCStarted() {
@@ -289,19 +301,8 @@ void OnRPCStarted() {
 void OnRPCStopped() {
     uiInterface.NotifyBlockTip.disconnect(&RPCNotifyBlockChange);
     RPCNotifyBlockChange(false, nullptr);
-    cvBlockChange.notify_all();
+    g_best_block_cv.notify_all();
     LogPrint(BCLog::RPC, "RPC stopped.\n");
-}
-
-void OnRPCPreCommand(const ContextFreeRPCCommand &cmd) {
-    // Observe safe mode.
-    std::string strWarning = GetWarnings("rpc");
-    if (strWarning != "" &&
-        !gArgs.GetBoolArg("-disablesafemode", DEFAULT_DISABLE_SAFEMODE) &&
-        !cmd.okSafeMode) {
-        throw JSONRPCError(RPC_FORBIDDEN_BY_SAFE_MODE,
-                           std::string("Safe mode: ") + strWarning);
-    }
 }
 
 std::string HelpMessage(HelpMessageMode mode) {
@@ -600,7 +601,7 @@ std::string HelpMessage(HelpMessageMode mode) {
                   DEFAULT_MAX_UPLOAD_TARGET));
 
 #ifdef ENABLE_WALLET
-    strUsage += CWallet::GetWalletHelpString(showDebug);
+    strUsage += GetWalletHelpString(showDebug);
 #endif
 
 #if ENABLE_ZMQ
@@ -650,6 +651,9 @@ std::string HelpMessage(HelpMessageMode mode) {
             "-disablesafemode", strprintf("Disable safemode, override a real "
                                           "safe mode event (default: %d)",
                                           DEFAULT_DISABLE_SAFEMODE));
+        strUsage +=
+            HelpMessageOpt("-deprecatedrpc=<method>",
+                           "Allows deprecated RPC method(s) to be used");
         strUsage += HelpMessageOpt(
             "-testsafemode",
             strprintf("Force safe mode (default: %d)", DEFAULT_TESTSAFEMODE));
@@ -762,7 +766,7 @@ std::string HelpMessage(HelpMessageMode mode) {
         strprintf(
             _("Fees (in %s/kB) smaller than this are considered zero fee for "
               "relaying, mining and transaction creation (default: %s)"),
-            CURRENCY_UNIT, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE)));
+            CURRENCY_UNIT, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE_PER_KB)));
     strUsage += HelpMessageOpt(
         "-maxtxfee=<amt>",
         strprintf(_("Maximum total fees (in %s) to use in a single wallet "
@@ -833,7 +837,7 @@ std::string HelpMessage(HelpMessageMode mode) {
         "-blockmintxfee=<amt>",
         strprintf(_("Set lowest fee rate (in %s/kB) for transactions to be "
                     "included in block creation. (default: %s)"),
-                  CURRENCY_UNIT, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE)));
+                  CURRENCY_UNIT, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB)));
     if (showDebug) {
         strUsage +=
             HelpMessageOpt("-blockversion=<n>",
@@ -942,13 +946,13 @@ static void BlockNotifyCallback(bool initialSync,
 }
 
 static bool fHaveGenesis = false;
-static boost::mutex cs_GenesisWait;
+static CWaitableCriticalSection cs_GenesisWait;
 static CConditionVariable condvar_GenesisWait;
 
 static void BlockNotifyGenesisWait(bool, const CBlockIndex *pBlockIndex) {
     if (pBlockIndex != nullptr) {
         {
-            boost::unique_lock<boost::mutex> lock_GenesisWait(cs_GenesisWait);
+            LOCK(cs_GenesisWait);
             fHaveGenesis = true;
         }
         condvar_GenesisWait.notify_all();
@@ -1041,7 +1045,7 @@ void ThreadImport(const Config &config, std::vector<fs::path> vImportFiles) {
             LogPrintf("Reindexing finished\n");
             // To avoid ending up in a situation without genesis block, re-try
             // initializing (no-op if reindexing worked):
-            InitBlockIndex(config);
+            LoadGenesisBlock(config.GetChainParams());
         }
 
         // hardcoded $DATADIR/bootstrap.dat
@@ -1114,17 +1118,18 @@ bool InitSanityCheck(void) {
     return true;
 }
 
-static bool AppInitServers(Config &config, boost::thread_group &threadGroup) {
+static bool AppInitServers(Config &config,
+                           HTTPRPCRequestProcessor &httpRPCRequestProcessor,
+                           boost::thread_group &threadGroup) {
     RPCServerSignals::OnStarted(&OnRPCStarted);
     RPCServerSignals::OnStopped(&OnRPCStopped);
-    RPCServerSignals::OnPreCommand(&OnRPCPreCommand);
     if (!InitHTTPServer(config)) {
         return false;
     }
     if (!StartRPC()) {
         return false;
     }
-    if (!StartHTTPRPC(config)) {
+    if (!StartHTTPRPC(config, httpRPCRequestProcessor)) {
         return false;
     }
     if (gArgs.GetBoolArg("-rest", DEFAULT_REST_ENABLE) && !StartREST()) {
@@ -1250,10 +1255,10 @@ static std::string ResolveErrMsg(const char *const optname,
 
 void InitLogging() {
     BCLog::Logger &logger = GetLogger();
-    logger.fPrintToConsole = gArgs.GetBoolArg("-printtoconsole", false);
-    logger.fLogTimestamps =
+    logger.m_print_to_console = gArgs.GetBoolArg("-printtoconsole", false);
+    logger.m_log_timestamps =
         gArgs.GetBoolArg("-logtimestamps", DEFAULT_LOGTIMESTAMPS);
-    logger.fLogTimeMicros =
+    logger.m_log_time_micros =
         gArgs.GetBoolArg("-logtimemicros", DEFAULT_LOGTIMEMICROS);
 
     fLogIPs = gArgs.GetBoolArg("-logips", DEFAULT_LOGIPS);
@@ -1345,7 +1350,7 @@ bool AppInitBasicSetup() {
     return true;
 }
 
-bool AppInitParameterInteraction(Config &config) {
+bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
     const CChainParams &chainparams = config.GetChainParams();
     // Step 2: parameter interactions
 
@@ -1573,7 +1578,7 @@ bool AppInitParameterInteraction(Config &config) {
         fPruneMode = true;
     }
 
-    RegisterAllRPCCommands(tableRPC);
+    RegisterAllRPCCommands(config, rpcServer, tableRPC);
 #ifdef ENABLE_WALLET
     RegisterWalletRPCCommands(tableRPC);
     RegisterDumpRPCCommands(tableRPC);
@@ -1608,10 +1613,10 @@ bool AppInitParameterInteraction(Config &config) {
             return InitError(AmountErrMsg("minrelaytxfee",
                                           gArgs.GetArg("-minrelaytxfee", "")));
         }
-        // High fee check is done afterward in CWallet::ParameterInteraction()
+        // High fee check is done afterward in WalletParameterInteraction()
         config.SetMinFeePerKB(CFeeRate(n));
     } else {
-        config.SetMinFeePerKB(CFeeRate(DEFAULT_MIN_RELAY_TX_FEE));
+        config.SetMinFeePerKB(CFeeRate(DEFAULT_MIN_RELAY_TX_FEE_PER_KB));
     }
 
     // Sanity check argument for min fee for including tx in block
@@ -1647,7 +1652,7 @@ bool AppInitParameterInteraction(Config &config) {
     nBytesPerSigOp = gArgs.GetArg("-bytespersigop", nBytesPerSigOp);
 
 #ifdef ENABLE_WALLET
-    if (!CWallet::ParameterInteraction()) {
+    if (!WalletParameterInteraction()) {
         return false;
     }
 #endif
@@ -1724,14 +1729,12 @@ bool AppInitSanityChecks() {
     }
 
     // Probe the data directory lock to give an early error message, if possible
+    // We cannot hold the data directory lock here, as the forking for daemon()
+    // hasn't yet happened, and a fork will cause weird behavior to it.
     return LockDataDirectory(true);
 }
 
-bool AppInitMain(Config &config, boost::thread_group &threadGroup,
-                 CScheduler &scheduler) {
-    const CChainParams &chainparams = config.GetChainParams();
-    // Step 4a: application initialization
-
+bool AppInitLockDataDirectory() {
     // After daemonization get the data directory lock again and hold on to it
     // until exit. This creates a slight window for a race condition to happen,
     // however this condition is harmless: it will at most make us exit without
@@ -1740,6 +1743,14 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
         // Detailed error printed inside LockDataDirectory
         return false;
     }
+    return true;
+}
+
+bool AppInitMain(Config &config,
+                 HTTPRPCRequestProcessor &httpRPCRequestProcessor,
+                 boost::thread_group &threadGroup, CScheduler &scheduler) {
+    // Step 4a: application initialization
+    const CChainParams &chainparams = config.GetChainParams();
 
 #ifndef WIN32
     CreatePidFile(GetPidFile(), getpid());
@@ -1754,11 +1765,11 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
         logger.ShrinkDebugFile();
     }
 
-    if (logger.fPrintToDebugLog) {
+    if (logger.m_print_to_file) {
         logger.OpenDebugLog();
     }
 
-    if (!logger.fLogTimestamps) {
+    if (!logger.m_log_timestamps) {
         LogPrintf("Startup time: %s\n",
                   DateTimeStrFormat("%Y-%m-%d %H:%M:%S", GetTime()));
     }
@@ -1788,6 +1799,8 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
     threadGroup.create_thread(boost::bind(&TraceThread<CScheduler::Function>,
                                           "scheduler", serviceLoop));
 
+    GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
+
     /**
      * Start the RPC server.  It will be started in "warmup" mode and not
      * process calls yet (but it will verify that the server is there and will
@@ -1796,7 +1809,7 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
      */
     if (gArgs.GetBoolArg("-server", false)) {
         uiInterface.InitMessage.connect(SetRPCWarmupStatus);
-        if (!AppInitServers(config, threadGroup)) {
+        if (!AppInitServers(config, httpRPCRequestProcessor, threadGroup)) {
             return InitError(
                 _("Unable to start HTTP server. See debug log for details."));
         }
@@ -1804,7 +1817,7 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
 
 // Step 5: verify wallet database integrity
 #ifdef ENABLE_WALLET
-    if (!CWallet::Verify(chainparams)) {
+    if (!WalletVerify(chainparams)) {
         return false;
     }
 #endif
@@ -1979,16 +1992,11 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
         do {
             try {
                 UnloadBlockIndex();
-                delete pcoinsTip;
-                delete pcoinsdbview;
-                delete pcoinscatcher;
-                delete pblocktree;
-
-                pblocktree =
-                    new CBlockTreeDB(nBlockTreeDBCache, false, fReindex);
-                pcoinsdbview = new CCoinsViewDB(nCoinDBCache, false,
-                                                fReindex || fReindexChainState);
-                pcoinscatcher = new CCoinsViewErrorCatcher(pcoinsdbview);
+                pcoinsTip.reset();
+                pcoinsdbview.reset();
+                pcoinscatcher.reset();
+                pblocktree.reset(
+                    new CBlockTreeDB(nBlockTreeDBCache, false, fReset));
 
                 if (fReindex) {
                     pblocktree->WriteReindexing(true);
@@ -1997,14 +2005,15 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
                     if (fPruneMode) {
                         CleanupBlockRevFiles();
                     }
-                } else if (!pcoinsdbview->Upgrade()) {
-                    strLoadError = _("Error upgrading chainstate database");
-                    break;
                 }
+
                 if (fRequestShutdown) {
                     break;
                 }
 
+                // LoadBlockIndex will load fTxIndex from the db, or set it if
+                // we're reindexing. It will also load fHavePruned if we've
+                // ever removed a block file from disk.
                 if (!LoadBlockIndex(config)) {
                     strLoadError = _("Error loading block database");
                     break;
@@ -2018,13 +2027,6 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
                         chainparams.GetConsensus().hashGenesisBlock) == 0) {
                     return InitError(_("Incorrect or no genesis block found. "
                                        "Wrong datadir for network?"));
-                }
-
-                // Initialize the block index (no-op if non-empty database was
-                // already loaded)
-                if (!InitBlockIndex(config)) {
-                    strLoadError = _("Error initializing block database");
-                    break;
                 }
 
                 // Check for changed -txindex state
@@ -2045,17 +2047,58 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
                     break;
                 }
 
-                if (!ReplayBlocks(config, pcoinsdbview)) {
+                // At this point blocktree args are consistent with what's on
+                // disk. If we're not mid-reindex (based on disk + args), add a
+                // genesis block on disk. This is called again in ThreadImport
+                // if the reindex completes.
+                if (!fReindex && !LoadGenesisBlock(chainparams)) {
+                    strLoadError = _("Error initializing block database");
+                    break;
+                }
+
+                // At this point we're either in reindex or we've loaded a
+                // useful block tree into mapBlockIndex!
+
+                pcoinsdbview.reset(new CCoinsViewDB(
+                    nCoinDBCache, false, fReset || fReindexChainState));
+                pcoinscatcher.reset(
+                    new CCoinsViewErrorCatcher(pcoinsdbview.get()));
+
+                // If necessary, upgrade from older database format.
+                // This is a no-op if we cleared the coinsviewdb with -reindex
+                // or -reindex-chainstate
+                if (!pcoinsdbview->Upgrade()) {
+                    strLoadError = _("Error upgrading chainstate database");
+                    break;
+                }
+
+                // ReplayBlocks is a no-op if we cleared the coinsviewdb with
+                // -reindex or -reindex-chainstate
+                if (!ReplayBlocks(config, pcoinsdbview.get())) {
                     strLoadError =
                         _("Unable to replay blocks. You will need to rebuild "
                           "the database using -reindex-chainstate.");
                     break;
                 }
 
-                pcoinsTip = new CCoinsViewCache(pcoinscatcher);
-                LoadChainTip(chainparams);
+                // The on-disk coinsdb is now in a good state, create the cache
+                pcoinsTip.reset(new CCoinsViewCache(pcoinscatcher.get()));
 
-                if (!fReindex && chainActive.Tip() != nullptr) {
+                if (!fReindex && !fReindexChainState) {
+                    // LoadChainTip sets chainActive based on pcoinsTip's best
+                    // block
+                    if (!LoadChainTip(config)) {
+                        strLoadError = _("Error initializing block database");
+                        break;
+                    }
+                    assert(chainActive.Tip() != nullptr);
+                }
+
+                if (!fReindex) {
+                    // Note that RewindBlockIndex MUST run even if we're about
+                    // to -reindex-chainstate. It both disconnects blocks based
+                    // on chainActive, and drops block data in mapBlockIndex
+                    // based on lack of available witness data.
                     uiInterface.InitMessage(_("Rewinding blocks..."));
                     if (!RewindBlockIndex(config)) {
                         strLoadError = _("Unable to rewind the database to a "
@@ -2065,39 +2108,43 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
                     }
                 }
 
-                uiInterface.InitMessage(_("Verifying blocks..."));
-                if (fHavePruned &&
-                    gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS) >
-                        MIN_BLOCKS_TO_KEEP) {
-                    LogPrintf("Prune: pruned datadir may not have more than %d "
-                              "blocks; only checking available blocks",
-                              MIN_BLOCKS_TO_KEEP);
-                }
+                if (!fReindex && !fReindexChainState) {
+                    uiInterface.InitMessage(_("Verifying blocks..."));
+                    if (fHavePruned &&
+                        gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS) >
+                            MIN_BLOCKS_TO_KEEP) {
+                        LogPrintf("Prune: pruned datadir may not have more "
+                                  "than %d blocks; only checking available "
+                                  "blocks",
+                                  MIN_BLOCKS_TO_KEEP);
+                    }
 
-                {
-                    LOCK(cs_main);
-                    CBlockIndex *tip = chainActive.Tip();
-                    RPCNotifyBlockChange(true, tip);
-                    if (tip &&
-                        tip->nTime >
-                            GetAdjustedTime() + MAX_FUTURE_BLOCK_TIME) {
-                        strLoadError =
-                            _("The block database contains a block which "
-                              "appears to be from the future. "
-                              "This may be due to your computer's date and "
-                              "time being set incorrectly. "
-                              "Only rebuild the block database if you are sure "
-                              "that your computer's date and time are correct");
+                    {
+                        LOCK(cs_main);
+                        CBlockIndex *tip = chainActive.Tip();
+                        RPCNotifyBlockChange(true, tip);
+                        if (tip &&
+                            tip->nTime >
+                                GetAdjustedTime() + MAX_FUTURE_BLOCK_TIME) {
+                            strLoadError =
+                                _("The block database contains a block which "
+                                  "appears to be from the future. This may be "
+                                  "due to your computer's date and time being "
+                                  "set incorrectly. Only rebuild the block "
+                                  "database if you are sure that your "
+                                  "computer's date and time are correct");
+                            break;
+                        }
+                    }
+
+                    if (!CVerifyDB().VerifyDB(
+                            config, pcoinsdbview.get(),
+                            gArgs.GetArg("-checklevel", DEFAULT_CHECKLEVEL),
+                            gArgs.GetArg("-checkblocks",
+                                         DEFAULT_CHECKBLOCKS))) {
+                        strLoadError = _("Corrupted block database detected");
                         break;
                     }
-                }
-
-                if (!CVerifyDB().VerifyDB(
-                        config, pcoinsdbview,
-                        gArgs.GetArg("-checklevel", DEFAULT_CHECKLEVEL),
-                        gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS))) {
-                    strLoadError = _("Corrupted block database detected");
-                    break;
                 }
             } catch (const std::exception &e) {
                 LogPrintf("%s\n", e.what());
@@ -2158,7 +2205,7 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
 
 // Step 8: load wallet
 #ifdef ENABLE_WALLET
-    if (!CWallet::InitLoadWallet(chainparams)) {
+    if (!InitLoadWallet(chainparams)) {
         return false;
     }
 #else
@@ -2206,9 +2253,12 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
 
     // Wait for genesis block to be processed
     {
-        boost::unique_lock<boost::mutex> lock(cs_GenesisWait);
-        while (!fHaveGenesis) {
-            condvar_GenesisWait.wait(lock);
+        WAIT_LOCK(cs_GenesisWait, lock);
+        // We previously could hang here if StartShutdown() is called prior to
+        // ThreadImport getting started, so instead we just wait on a timer to
+        // check ShutdownRequested() regularly.
+        while (!fHaveGenesis && !ShutdownRequested()) {
+            condvar_GenesisWait.wait_for(lock, std::chrono::milliseconds(500));
         }
         uiInterface.NotifyBlockTip.disconnect(BlockNotifyGenesisWait);
     }

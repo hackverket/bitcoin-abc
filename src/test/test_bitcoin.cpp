@@ -61,7 +61,7 @@ BasicTestingSetup::BasicTestingSetup(const std::string &chainName) {
     InitScriptExecutionCache();
 
     // Don't want to write to debug.log file.
-    GetLogger().fPrintToDebugLog = false;
+    GetLogger().m_print_to_file = false;
 
     fCheckBlockIndex = true;
     SelectParams(chainName);
@@ -78,22 +78,30 @@ BasicTestingSetup::~BasicTestingSetup() {
 
 TestingSetup::TestingSetup(const std::string &chainName)
     : BasicTestingSetup(chainName) {
+    const Config &config = GetConfig();
+    const CChainParams &chainparams = config.GetChainParams();
 
     // Ideally we'd move all the RPC tests to the functional testing framework
     // instead of unit tests, but for now we need these here.
-    const Config &config = GetConfig();
-    RegisterAllRPCCommands(tableRPC);
+    RPCServer rpcServer;
+    RegisterAllRPCCommands(config, rpcServer, tableRPC);
     ClearDatadirCache();
     pathTemp = GetTempPath() / strprintf("test_bitcoin_%lu_%i",
                                          (unsigned long)GetTime(),
                                          (int)(InsecureRandRange(100000)));
     fs::create_directories(pathTemp);
     gArgs.ForceSetArg("-datadir", pathTemp.string());
+
+    // Note that because we don't bother running a scheduler thread here,
+    // callbacks via CValidationInterface are unreliable, but that's OK,
+    // our unit tests aren't testing multiple parts of the code at once.
+    GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
+
     mempool.setSanityCheck(1.0);
-    pblocktree = new CBlockTreeDB(1 << 20, true);
-    pcoinsdbview = new CCoinsViewDB(1 << 23, true);
-    pcoinsTip = new CCoinsViewCache(pcoinsdbview);
-    if (!InitBlockIndex(config)) {
+    pblocktree.reset(new CBlockTreeDB(1 << 20, true));
+    pcoinsdbview.reset(new CCoinsViewDB(1 << 23, true));
+    pcoinsTip.reset(new CCoinsViewCache(pcoinsdbview.get()));
+    if (!LoadGenesisBlock(chainparams)) {
         throw std::runtime_error("InitBlockIndex failed.");
     }
     {
@@ -116,12 +124,14 @@ TestingSetup::TestingSetup(const std::string &chainName)
 TestingSetup::~TestingSetup() {
     threadGroup.interrupt_all();
     threadGroup.join_all();
+    GetMainSignals().FlushBackgroundCallbacks();
+    GetMainSignals().UnregisterBackgroundSignalScheduler();
     g_connman.reset();
     peerLogic.reset();
     UnloadBlockIndex();
-    delete pcoinsTip;
-    delete pcoinsdbview;
-    delete pblocktree;
+    pcoinsTip.reset();
+    pcoinsdbview.reset();
+    pblocktree.reset();
     fs::remove_all(pathTemp);
 }
 

@@ -44,7 +44,7 @@ static int AppInitRawTx(int argc, char *argv[]) {
     // Check for -testnet or -regtest parameter (Params() calls are only valid
     // after this clause)
     try {
-        SelectParams(ChainNameFromCommandLine());
+        SelectParams(gArgs.GetChainName());
     } catch (const std::exception &e) {
         fprintf(stderr, "Error: %s\n", e.what());
         return EXIT_FAILURE;
@@ -517,24 +517,6 @@ static bool findSigHashFlags(SigHashType &sigHashType,
     }
 
     return false;
-}
-
-uint256 ParseHashUO(std::map<std::string, UniValue> &o, std::string strKey) {
-    if (!o.count(strKey)) {
-        return uint256();
-    }
-
-    return ParseHashUV(o[strKey], strKey);
-}
-
-std::vector<uint8_t> ParseHexUO(std::map<std::string, UniValue> &o,
-                                std::string strKey) {
-    if (!o.count(strKey)) {
-        std::vector<uint8_t> emptyVec;
-        return emptyVec;
-    }
-
-    return ParseHexUV(o[strKey], strKey);
 }
 
 static Amount AmountFromValue(const UniValue &value) {

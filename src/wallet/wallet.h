@@ -1,5 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2018 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -45,8 +46,6 @@ static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 static const Amount DEFAULT_TRANSACTION_FEE = Amount::zero();
 //! -fallbackfee default
 static const Amount DEFAULT_FALLBACK_FEE(20000 * SATOSHI);
-//! -mintxfee default
-static const Amount DEFAULT_TRANSACTION_MINFEE(1000 * SATOSHI);
 //! minimum recommended increment for BIP 125 replacement txs
 static const Amount WALLET_INCREMENTAL_RELAY_FEE(5000 * SATOSHI);
 //! target minimum change amount
@@ -253,6 +252,11 @@ public:
         const CBlockIndex *pindexRet;
         return GetDepthInMainChain(pindexRet) > 0;
     }
+    /**
+     * @return number of blocks to maturity for this transaction:
+     *  0 : is not a coinbase transaction, or is a mature coinbase transaction
+     * >0 : is a coinbase transaction which matures in this many blocks
+     */
     int GetBlocksToMaturity() const;
     /**
      * Pass this transaction to the mempool. Fails if absolute fee exceeds
@@ -267,6 +271,7 @@ public:
 
     TxId GetId() const { return tx->GetId(); }
     bool IsCoinBase() const { return tx->IsCoinBase(); }
+    bool IsImmatureCoinBase() const;
 };
 
 /**
@@ -774,7 +779,12 @@ public:
      */
     void AvailableCoins(std::vector<COutput> &vCoins, bool fOnlySafe = true,
                         const CCoinControl *coinControl = nullptr,
-                        bool fIncludeZeroValue = false) const;
+                        const Amount nMinimumAmount = SATOSHI,
+                        const Amount nMaximumAmount = MAX_MONEY,
+                        const Amount nMinimumSumAmount = MAX_MONEY,
+                        const uint64_t &nMaximumCount = 0,
+                        const int &nMinDepth = 0,
+                        const int &nMaxDepth = 9999999) const;
 
     /**
      * Shuffle and select coins until nTargetValue is reached while avoiding
@@ -951,27 +961,7 @@ public:
     template <typename ContainerType>
     bool DummySignTx(CMutableTransaction &txNew, const ContainerType &coins);
 
-    static CFeeRate minTxFee;
     static CFeeRate fallbackFee;
-    /**
-     * Estimate the minimum fee considering user set parameters and the required
-     * fee
-     */
-    static Amount GetMinimumFee(unsigned int nTxBytes,
-                                unsigned int nConfirmTarget,
-                                const CTxMemPool &pool);
-    /**
-     * Estimate the minimum fee considering required fee and targetFee or if 0
-     * then fee estimation for nConfirmTarget
-     */
-    static Amount GetMinimumFee(unsigned int nTxBytes,
-                                unsigned int nConfirmTarget,
-                                const CTxMemPool &pool, Amount targetFee);
-    /**
-     * Return the minimum required fee taking into account the floating relay
-     * fee and user set minimum transaction fee
-     */
-    static Amount GetRequiredFee(unsigned int nTxBytes);
 
     bool NewKeyPool();
     size_t KeypoolCountExternalKeys();
@@ -1073,13 +1063,6 @@ public:
     //! Flush wallet (bitdb flush)
     void Flush(bool shutdown = false);
 
-    //! Responsible for reading and validating the -wallet arguments and
-    //! verifying the wallet database.
-    // This function will perform salvage on the wallet if requested, as long as
-    // only one wallet is being loaded (CWallet::ParameterInteraction forbids
-    // -salvagewallet, -zapwallettxes or -upgradewallet with multiwallet).
-    static bool Verify(const CChainParams &chainParams);
-
     /**
      * Address book entry changed.
      * @note called with lock cs_wallet held.
@@ -1117,16 +1100,12 @@ public:
      */
     bool AbandonTransaction(const TxId &txid);
 
-    /* Returns the wallets help message */
-    static std::string GetWalletHelpString(bool showDebug);
-
     /**
      * Initializes the wallet, returns a new CWallet instance or a null pointer
      * in case of an error.
      */
     static CWallet *CreateWalletFromFile(const CChainParams &chainParams,
                                          const std::string walletFile);
-    static bool InitLoadWallet(const CChainParams &chainParams);
 
     /**
      * Wallet post-init setup
@@ -1134,9 +1113,6 @@ public:
      * post-init tasks
      */
     void postInitProcess(CScheduler &scheduler);
-
-    /* Wallets parameter interaction */
-    static bool ParameterInteraction();
 
     bool BackupWallet(const std::string &strDest);
 

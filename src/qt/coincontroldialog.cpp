@@ -18,6 +18,7 @@
 #include "policy/policy.h"
 #include "validation.h" // For mempool
 #include "wallet/coincontrol.h"
+#include "wallet/fees.h"
 #include "wallet/wallet.h"
 
 #include <QApplication>
@@ -125,12 +126,8 @@ CoinControlDialog::CoinControlDialog(const PlatformStyle *_platformStyle,
     connect(ui->treeWidget, SIGNAL(itemChanged(QTreeWidgetItem *, int)), this,
             SLOT(viewItemChanged(QTreeWidgetItem *, int)));
 
-// click on header
-#if QT_VERSION < 0x050000
-    ui->treeWidget->header()->setClickable(true);
-#else
+    // click on header
     ui->treeWidget->header()->setSectionsClickable(true);
-#endif
     connect(ui->treeWidget->header(), SIGNAL(sectionClicked(int)), this,
             SLOT(headerSectionClicked(int)));
 
@@ -434,9 +431,9 @@ void CoinControlDialog::viewItemChanged(QTreeWidgetItem *item, int column) {
         }
     }
 
-// TODO: Remove this temporary qt5 fix after Qt5.3 and Qt5.4 are no longer used.
-//       Fixed in Qt5.5 and above: https://bugreports.qt.io/browse/QTBUG-43473
-#if QT_VERSION >= 0x050000
+    // TODO: Remove this temporary qt5 fix after Qt5.3 and Qt5.4 are no longer
+    // used.
+    // Fixed in Qt5.5 and above: https://bugreports.qt.io/browse/QTBUG-43473
     else if (column == COLUMN_CHECKBOX && item->childCount() > 0) {
         if (item->checkState(COLUMN_CHECKBOX) == Qt::PartiallyChecked &&
             item->child(0)->checkState(COLUMN_CHECKBOX) ==
@@ -444,7 +441,6 @@ void CoinControlDialog::viewItemChanged(QTreeWidgetItem *item, int column) {
             item->setCheckState(COLUMN_CHECKBOX, Qt::Checked);
         }
     }
-#endif
 }
 
 // shows count of locked unspent outputs
@@ -549,7 +545,7 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog *dialog) {
         }
 
         // Fee
-        nPayFee = CWallet::GetMinimumFee(nBytes, nTxConfirmTarget, mempool);
+        nPayFee = GetMinimumFee(nBytes, nTxConfirmTarget, mempool);
         if (nPayFee > Amount::zero() &&
             coinControl->nMinimumTotalFee > nPayFee) {
             nPayFee = coinControl->nMinimumTotalFee;
@@ -643,17 +639,8 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog *dialog) {
            "than the current dust threshold.");
 
     // how many satoshis the estimated fee can vary per byte we guess wrong
-    double dFeeVary;
-    if (payTxFee.GetFeePerK() > Amount::zero()) {
-        dFeeVary =
-            std::max(CWallet::GetRequiredFee(1000), payTxFee.GetFeePerK()) /
-            (1000 * SATOSHI);
-    } else {
-        dFeeVary =
-            std::max(CWallet::GetRequiredFee(1000),
-                     mempool.estimateSmartFee(nTxConfirmTarget).GetFeePerK()) /
-            (1000 * SATOSHI);
-    }
+    double dFeeVary = GetMinimumFee(1000, 2, mempool) / (1000 * SATOSHI);
+
     QString toolTip4 =
         tr("Can vary +/- %1 satoshi(s) per input.").arg(dFeeVary);
 

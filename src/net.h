@@ -170,7 +170,7 @@ public:
     void Interrupt();
     bool GetNetworkActive() const { return fNetworkActive; };
     void SetNetworkActive(bool active);
-    bool OpenNetworkConnection(const CAddress &addrConnect, bool fCountFailure,
+    void OpenNetworkConnection(const CAddress &addrConnect, bool fCountFailure,
                                CSemaphoreGrant *grantOutbound = nullptr,
                                const char *strDest = nullptr,
                                bool fOneShot = false, bool fFeeler = false,
@@ -217,12 +217,9 @@ public:
     size_t GetAddressCount() const;
     void SetServices(const CService &addr, ServiceFlags nServices);
     void MarkAddressGood(const CAddress &addr);
-    void AddNewAddress(const CAddress &addr, const CAddress &addrFrom,
-                       int64_t nTimePenalty = 0);
     void AddNewAddresses(const std::vector<CAddress> &vAddr,
                          const CAddress &addrFrom, int64_t nTimePenalty = 0);
     std::vector<CAddress> GetAddresses();
-    void AddressCurrentlyConnected(const CService &addr);
 
     // Denial-of-service detection/prevention. The idea is to detect peers that
     // are behaving badly and disconnect/ban them, but do it in a
@@ -267,8 +264,6 @@ public:
     void GetNodeStats(std::vector<CNodeStats> &vstats);
     bool DisconnectNode(const std::string &node);
     bool DisconnectNode(NodeId id);
-
-    unsigned int GetSendBufferSize() const;
 
     ServiceFlags GetLocalServices() const;
 
@@ -421,7 +416,7 @@ private:
     bool fMsgProcWake;
 
     std::condition_variable condMsgProc;
-    std::mutex mutexMsgProc;
+    CWaitableCriticalSection mutexMsgProc;
     std::atomic<bool> flagInterruptMsgProc;
 
     CThreadInterrupt interruptNet;
@@ -449,20 +444,6 @@ void StopMapPort();
 unsigned short GetListenPort();
 bool BindListenPort(const CService &bindAddr, std::string &strError,
                     bool fWhitelisted = false);
-
-struct CombinerAll {
-    typedef bool result_type;
-
-    template <typename I> bool operator()(I first, I last) const {
-        while (first != last) {
-            if (!(*first)) {
-                return false;
-            }
-            ++first;
-        }
-        return true;
-    }
-};
 
 /**
  * Interface for message handling
@@ -508,7 +489,7 @@ bool IsLimited(enum Network net);
 bool IsLimited(const CNetAddr &addr);
 bool AddLocal(const CService &addr, int nScore = LOCAL_NONE);
 bool AddLocal(const CNetAddr &addr, int nScore = LOCAL_NONE);
-bool RemoveLocal(const CService &addr);
+void RemoveLocal(const CService &addr);
 bool SeenLocal(const CService &addr);
 bool IsLocal(const CService &addr);
 bool GetLocal(CService &addr, const CNetAddr *paddrPeer = nullptr);

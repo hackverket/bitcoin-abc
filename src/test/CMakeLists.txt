@@ -96,6 +96,7 @@ add_test_to_suite(bitcoin test_bitcoin
 	random_tests.cpp
 	reverselock_tests.cpp
 	rpc_tests.cpp
+	rwcollection_tests.cpp
 	sanity_tests.cpp
 	scheduler_tests.cpp
 	script_commitment_tests.cpp
@@ -111,6 +112,7 @@ add_test_to_suite(bitcoin test_bitcoin
 	sigutil.cpp
 	skiplist_tests.cpp
 	streams_tests.cpp
+	sync_tests.cpp
 	test_bitcoin.cpp
 	test_bitcoin_main.cpp
 	testutil.cpp
@@ -125,6 +127,9 @@ add_test_to_suite(bitcoin test_bitcoin
 	validation_tests.cpp
 	work_comparator_tests.cpp
 
+	# RPC Tests
+	../rpc/test/server_tests.cpp
+
 	# Tests generated from JSON
 	${JSON_HEADERS}
 )
@@ -133,8 +138,6 @@ target_include_directories(test_bitcoin
 	PUBLIC
 		# To access the generated json headers.
 		${CMAKE_CURRENT_BINARY_DIR}
-	PRIVATE
-		${OPENSSL_INCLUDE_DIR}
 )
 
 find_package(Boost 1.58 REQUIRED unit_test_framework)

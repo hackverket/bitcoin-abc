@@ -21,6 +21,7 @@
 #include "ui_interface.h"
 #include "validation.h" // mempool and minRelayTxFee
 #include "wallet/coincontrol.h"
+#include "wallet/fees.h"
 #include "wallet/wallet.h"
 
 #include <QMessageBox>
@@ -220,7 +221,8 @@ void SendCoinsDialog::setModel(WalletModel *_model) {
                 SLOT(updateGlobalFeeVariables()));
         connect(ui->checkBoxMinimumFee, SIGNAL(stateChanged(int)), this,
                 SLOT(coinControlUpdateLabels()));
-        ui->customFee->setSingleStep(CWallet::GetRequiredFee(1000));
+
+        ui->customFee->setSingleStep(GetMinimumFee(1000, 2, mempool));
         updateFeeSectionControls();
         updateMinFeeLabel();
         updateSmartFeeLabel();
@@ -437,6 +439,8 @@ SendCoinsEntry *SendCoinsDialog::addEntry() {
     ui->entries->addWidget(entry);
     connect(entry, SIGNAL(removeEntry(SendCoinsEntry *)), this,
             SLOT(removeEntry(SendCoinsEntry *)));
+    connect(entry, SIGNAL(useAvailableBalance(SendCoinsEntry *)), this,
+            SLOT(useAvailableBalance(SendCoinsEntry *)));
     connect(entry, SIGNAL(payAmountChanged()), this,
             SLOT(coinControlUpdateLabels()));
     connect(entry, SIGNAL(subtractFeeFromAmountChanged()), this,
@@ -634,9 +638,34 @@ void SendCoinsDialog::on_buttonMinimizeFee_clicked() {
     minimizeFeeSection(true);
 }
 
+void SendCoinsDialog::useAvailableBalance(SendCoinsEntry *entry) {
+    // Get CCoinControl instance if CoinControl is enabled or create a new one.
+    CCoinControl coin_control;
+    if (model->getOptionsModel()->getCoinControlFeatures()) {
+        coin_control = *CoinControlDialog::coinControl;
+    }
+
+    // Calculate available amount to send.
+    Amount amount = model->getBalance(&coin_control);
+    for (int i = 0; i < ui->entries->count(); ++i) {
+        SendCoinsEntry *e =
+            qobject_cast<SendCoinsEntry *>(ui->entries->itemAt(i)->widget());
+        if (e && !e->isHidden() && e != entry) {
+            amount -= e->getValue().amount;
+        }
+    }
+
+    if (amount > Amount::zero()) {
+        entry->checkSubtractFeeFromAmount();
+        entry->setAmount(amount);
+    } else {
+        entry->setAmount(Amount::zero());
+    }
+}
+
 void SendCoinsDialog::setMinimumFee() {
     ui->radioCustomPerKilobyte->setChecked(true);
-    ui->customFee->setValue(CWallet::GetRequiredFee(1000));
+    ui->customFee->setValue(GetMinimumFee(1000, 2, mempool));
 }
 
 void SendCoinsDialog::updateFeeSectionControls() {
@@ -709,7 +738,7 @@ void SendCoinsDialog::updateMinFeeLabel() {
             tr("Pay only the required fee of %1")
                 .arg(BitcoinUnits::formatWithUnit(
                          model->getOptionsModel()->getDisplayUnit(),
-                         CWallet::GetRequiredFee(1000)) +
+                         GetMinimumFee(1000, 2, mempool)) +
                      "/kB"));
 }
 
@@ -727,7 +756,7 @@ void SendCoinsDialog::updateSmartFeeLabel() {
             BitcoinUnits::formatWithUnit(
                 model->getOptionsModel()->getDisplayUnit(),
                 std::max(CWallet::fallbackFee.GetFeePerK(),
-                         CWallet::GetRequiredFee(1000))) +
+                         GetMinimumFee(1000, 2, mempool))) +
             "/kB");
         // (Smart fee not initialized yet. This usually takes a few blocks...)
         ui->labelSmartFee2->show();
@@ -736,7 +765,8 @@ void SendCoinsDialog::updateSmartFeeLabel() {
         ui->labelSmartFee->setText(
             BitcoinUnits::formatWithUnit(
                 model->getOptionsModel()->getDisplayUnit(),
-                std::max(feeRate.GetFeePerK(), CWallet::GetRequiredFee(1000))) +
+                std::max(feeRate.GetFeePerK(),
+                         GetMinimumFee(1000, 2, mempool))) +
             "/kB");
         ui->labelSmartFee2->hide();
         ui->labelFeeEstimation->setText(

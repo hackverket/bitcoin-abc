@@ -36,6 +36,7 @@ class CBlockIndex;
 class CBlockTreeDB;
 class CBloomFilter;
 class CChainParams;
+class CCoinsViewDB;
 class CConnman;
 class CInv;
 class Config;
@@ -58,7 +59,7 @@ static const bool DEFAULT_WHITELISTRELAY = true;
 /** Default for DEFAULT_WHITELISTFORCERELAY. */
 static const bool DEFAULT_WHITELISTFORCERELAY = true;
 /** Default for -minrelaytxfee, minimum relay fee for transactions */
-static const Amount DEFAULT_MIN_RELAY_TX_FEE(1000 * SATOSHI);
+static const Amount DEFAULT_MIN_RELAY_TX_FEE_PER_KB(1000 * SATOSHI);
 /** Default for -excessutxocharge for transactions transactions */
 static const Amount DEFAULT_UTXO_FEE = Amount::zero();
 //! -maxtxfee default
@@ -197,8 +198,9 @@ extern CTxMemPool mempool;
 extern uint64_t nLastBlockTx;
 extern uint64_t nLastBlockSize;
 extern const std::string strMessageMagic;
-extern CWaitableCriticalSection csBestBlock;
-extern CConditionVariable cvBlockChange;
+extern CWaitableCriticalSection g_best_block_mutex;
+extern CConditionVariable g_best_block_cv;
+extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
 extern bool fReindex;
 extern int nScriptCheckThreads;
@@ -350,19 +352,21 @@ bool LoadExternalBlockFile(const Config &config, FILE *fileIn,
                            CDiskBlockPos *dbp = nullptr);
 
 /**
- * Initialize a new block tree database + block data on disk.
+ * Ensures we have a genesis block in the block tree, possibly writing one to
+ * disk.
  */
-bool InitBlockIndex(const Config &config);
+bool LoadGenesisBlock(const CChainParams &chainparams);
 
 /**
- * Load the block tree and coins database from disk.
+ * Load the block tree and coins database from disk, initializing state if we're
+ * running with -reindex.
  */
 bool LoadBlockIndex(const Config &config);
 
 /**
  * Update the chain tip based on database information.
  */
-void LoadChainTip(const CChainParams &chainparams);
+bool LoadChainTip(const Config &config);
 
 /**
  * Unload database information.
@@ -625,19 +629,33 @@ bool PreciousBlock(const Config &config, CValidationState &state,
 bool InvalidateBlock(const Config &config, CValidationState &state,
                      CBlockIndex *pindex);
 
+/** Park a block. */
+bool ParkBlock(const Config &config, CValidationState &state,
+               CBlockIndex *pindex);
+
 /** Remove invalidity status from a block and its descendants. */
 bool ResetBlockFailureFlags(CBlockIndex *pindex);
+
+/** Remove parked status from a block and its descendants. */
+bool UnparkBlock(CBlockIndex *pindex);
 
 /** The currently-connected chain of blocks (protected by cs_main). */
 extern CChain chainActive;
 
-/** Global variable that points to the active CCoinsView (protected by cs_main)
+/**
+ * Global variable that points to the coins database (protected by cs_main)
  */
-extern CCoinsViewCache *pcoinsTip;
+extern std::unique_ptr<CCoinsViewDB> pcoinsdbview;
 
-/** Global variable that points to the active block tree (protected by cs_main)
+/**
+ * Global variable that points to the active CCoinsView (protected by cs_main)
  */
-extern CBlockTreeDB *pblocktree;
+extern std::unique_ptr<CCoinsViewCache> pcoinsTip;
+
+/**
+ * Global variable that points to the active block tree (protected by cs_main)
+ */
+extern std::unique_ptr<CBlockTreeDB> pblocktree;
 
 /**
  * Return the spend height, which is one more than the inputs.GetBestBlock().
