@@ -379,7 +379,7 @@ static bool AcceptToMemoryPoolWorker(
     const Config &config, CTxMemPool &pool, CValidationState &state,
     const CTransactionRef &ptx, bool fLimitFree, bool *pfMissingInputs,
     int64_t nAcceptTime, bool fOverrideMempoolLimit, const Amount nAbsurdFee,
-    std::vector<COutPoint> &coins_to_uncache) {
+    std::vector<COutPoint> &coins_to_uncache, bool dryrun = false) {
     AssertLockHeld(cs_main);
 
     const CTransaction &tx = *ptx;
@@ -703,23 +703,26 @@ static bool AcceptToMemoryPoolWorker(
         bool validForFeeEstimation =
             IsCurrentForFeeEstimation() && pool.HasNoInputsOf(tx);
 
-        // Store transaction in memory.
-        pool.addUnchecked(txid, entry, setAncestors, validForFeeEstimation);
+        if (!dryrun) {
+            // Store transaction in memory.
+            pool.addUnchecked(txid, entry, setAncestors, validForFeeEstimation);
 
-        // Trim mempool and check if tx was trimmed.
-        if (!fOverrideMempoolLimit) {
-            pool.LimitSize(
-                gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000,
-                gArgs.GetArg("-mempoolexpiry", DEFAULT_MEMPOOL_EXPIRY) * 60 *
-                    60);
-            if (!pool.exists(txid)) {
-                return state.DoS(0, false, REJECT_INSUFFICIENTFEE,
-                                 "mempool full");
+            // Trim mempool and check if tx was trimmed.
+            if (!fOverrideMempoolLimit) {
+                pool.LimitSize(
+                    gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000,
+                    gArgs.GetArg("-mempoolexpiry", DEFAULT_MEMPOOL_EXPIRY) * 60 *
+                        60);
+                if (!pool.exists(txid)) {
+                    return state.DoS(0, false, REJECT_INSUFFICIENTFEE,
+                                     "mempool full");
+                }
             }
         }
     }
-
-    GetMainSignals().TransactionAddedToMempool(ptx);
+    if (!dryrun) {
+        GetMainSignals().TransactionAddedToMempool(ptx);
+    }
     return true;
 }
 
@@ -730,11 +733,11 @@ static bool AcceptToMemoryPoolWithTime(
     const Config &config, CTxMemPool &pool, CValidationState &state,
     const CTransactionRef &tx, bool fLimitFree, bool *pfMissingInputs,
     int64_t nAcceptTime, bool fOverrideMempoolLimit = false,
-    const Amount nAbsurdFee = Amount::zero()) {
+    const Amount nAbsurdFee = Amount::zero(), bool dryrun = false) {
     std::vector<COutPoint> coins_to_uncache;
     bool res = AcceptToMemoryPoolWorker(
         config, pool, state, tx, fLimitFree, pfMissingInputs, nAcceptTime,
-        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache);
+        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache, dryrun);
     if (!res) {
         for (const COutPoint &outpoint : coins_to_uncache) {
             pcoinsTip->Uncache(outpoint);
@@ -751,10 +754,10 @@ static bool AcceptToMemoryPoolWithTime(
 bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
                         CValidationState &state, const CTransactionRef &tx,
                         bool fLimitFree, bool *pfMissingInputs,
-                        bool fOverrideMempoolLimit, const Amount nAbsurdFee) {
+                        bool fOverrideMempoolLimit, const Amount nAbsurdFee, bool dryrun) {
     return AcceptToMemoryPoolWithTime(config, pool, state, tx, fLimitFree,
                                       pfMissingInputs, GetTime(),
-                                      fOverrideMempoolLimit, nAbsurdFee);
+                                      fOverrideMempoolLimit, nAbsurdFee, dryrun);
 }
 
 /**
