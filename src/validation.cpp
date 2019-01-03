@@ -615,7 +615,7 @@ static bool AcceptToMemoryPoolWorker(
                          DEFAULT_DESCENDANT_SIZE_LIMIT) *
             1000;
         std::string errString;
-        if (!pool.CalculateMemPoolAncestors(
+        if (dryrun && !pool.CalculateMemPoolAncestors(
                 entry, setAncestors, nLimitAncestors, nLimitAncestorSize,
                 nLimitDescendants, nLimitDescendantSize, errString)) {
             return state.DoS(0, false, REJECT_NONSTANDARD,

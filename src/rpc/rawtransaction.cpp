@@ -1316,7 +1316,6 @@ static UniValue validaterawtransaction(const Config &config,
 
     bool fHaveMempool = mempool.exists(txid);
     if (!fHaveMempool && !fHaveChain) {
-        // Push to local node and sync with wallets.
         CValidationState state;
         bool fMissingInputs;
         if (!AcceptToMemoryPool(config, mempool, state, std::move(tx),
