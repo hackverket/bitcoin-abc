@@ -11,9 +11,7 @@ import time
 import random
 import decimal
 
-from test_framework.blocktools import create_coinbase
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import *
 
 
 class CTORMiningTest(BitcoinTestFramework):
@@ -28,7 +26,6 @@ class CTORMiningTest(BitcoinTestFramework):
         self.mocktime = int(time.time()) - 600 * 100
 
         extra_arg = ['-spendzeroconfchange=0', '-whitelist=127.0.0.1',
-                     "-magneticanomalyactivationtime=%d" % self.mocktime,
                      "-replayprotectionactivationtime=%d" % (10 * self.mocktime)]
         self.extra_args = [extra_arg, extra_arg]
 

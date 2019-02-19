@@ -115,12 +115,12 @@ public:
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000d4800adc35a2748a30dfcf");
+            "000000000000000000000000000000000000000000ddd4a527724e4a8e938b34");
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
         consensus.defaultAssumeValid = uint256S(
-            "0000000000000000010153246b1d97065983cd763ea3da6f9280b6ffc5e5ffbf");
+            "000000000000000004d113c100b7a591ae105ef7c185985cec60517cbef8d784");
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 478558;
@@ -128,11 +128,14 @@ public:
         // November 13, 2017 hard fork
         consensus.daaHeight = 504031;
 
-        // Nov 15, 2018 hard fork
-        consensus.magneticAnomalyActivationTime = 1542300000;
+        // November 15, 2018 hard fork
+        consensus.magneticAnomalyHeight = 556766;
 
         // Wed, 15 May 2019 12:00:00 UTC hard fork
         consensus.greatWallActivationTime = 1557921600;
+
+        // Nov 15, 2019 12:00:00 UTC protocol upgrade
+        consensus.gravitonActivationTime = 1573819200;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -286,12 +289,12 @@ public:
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S(
-            "00000000000000000000000000000000000000000000003e28ffb60a2b69f5f0");
+            "0000000000000000000000000000000000000000000000416ad051088ff75074");
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
         consensus.defaultAssumeValid = uint256S(
-            "0000000000000102b62e613c19671226fc8e098d4f89cf8b8da3f73aca8590e1");
+            "000000000000030bee568d677b6b99ee7d2d00b25d1fe95df5e73b484f00c322");
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 1155875;
@@ -299,11 +302,14 @@ public:
         // November 13, 2017 hard fork
         consensus.daaHeight = 1188697;
 
-        // Nov 15, 2018 hard fork
-        consensus.magneticAnomalyActivationTime = 1542300000;
+        // November 15, 2018 hard fork
+        consensus.magneticAnomalyHeight = 1267996;
 
         // Wed, 15 May 2019 12:00:00 UTC hard fork
         consensus.greatWallActivationTime = 1557921600;
+
+        // Nov 15, 2019 12:00:00 UTC protocol upgrade
+        consensus.gravitonActivationTime = 1573819200;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -419,11 +425,14 @@ public:
         // November 13, 2017 hard fork is always on on regtest.
         consensus.daaHeight = 0;
 
-        // Nov 15, 2018 hard fork
-        consensus.magneticAnomalyActivationTime = 1542300000;
+        // November 15, 2018 hard fork is always on on regtest.
+        consensus.magneticAnomalyHeight = 0;
 
         // Wed, 15 May 2019 12:00:00 UTC hard fork
         consensus.greatWallActivationTime = 1557921600;
+
+        // Nov 15, 2019 12:00:00 UTC protocol upgrade
+        consensus.gravitonActivationTime = 1573819200;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;

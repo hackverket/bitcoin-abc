@@ -196,10 +196,17 @@ static const bool DEFAULT_PEERBLOOMFILTERS = true;
 static const int DEFAULT_STOPATHEIGHT = 0;
 /** Default for -maxreorgdepth */
 static const int DEFAULT_MAX_REORG_DEPTH = 10;
+/**
+ * Default for -finalizationdelay
+ * This is the minimum time between a block header reception and the block
+ * finalization.
+ * This value should be >> block propagation and validation time
+ */
+static const int64_t DEFAULT_MIN_FINALIZATION_DELAY = 2 * 60 * 60;
 
 extern CScript COINBASE_FLAGS;
 extern CCriticalSection cs_main;
-extern CTxMemPool mempool;
+extern CTxMemPool g_mempool;
 extern uint64_t nLastBlockTx;
 extern uint64_t nLastBlockSize;
 extern const std::string strMessageMagic;
@@ -207,7 +214,7 @@ extern CWaitableCriticalSection g_best_block_mutex;
 extern CConditionVariable g_best_block_cv;
 extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
-extern bool fReindex;
+extern std::atomic_bool fReindex;
 extern int nScriptCheckThreads;
 extern bool fTxIndex;
 extern bool fIsBareMultisigStd;
@@ -256,6 +263,8 @@ extern uint64_t nPruneTarget;
 /** Block files containing a block-height within MIN_BLOCKS_TO_KEEP of
  * chainActive.Tip() will not be pruned. */
 static const unsigned int MIN_BLOCKS_TO_KEEP = 288;
+/** Minimum blocks required to signal NODE_NETWORK_LIMITED */
+static const unsigned int NODE_NETWORK_LIMITED_MIN_BLOCKS = 288;
 
 static const signed int DEFAULT_CHECKBLOCKS = 6;
 static const unsigned int DEFAULT_CHECKLEVEL = 3;
@@ -388,19 +397,6 @@ void ThreadScriptCheck();
  * or network)
  */
 bool IsInitialBlockDownload();
-
-/**
- * Format a string that describes several potential problems detected by the
- * core.
- * strFor can have three values:
- * - "rpc": get critical warnings, which should put the client in safe mode if
- * non-empty
- * - "statusbar": get all warnings
- * - "gui": get all warnings, translated (where possible) for GUI
- * This function only returns the highest priority warning of the set selected
- * by strFor.
- */
-std::string GetWarnings(const std::string &strFor);
 
 /**
  * Retrieve a transaction (from memory pool, or from disk, if possible).
@@ -543,7 +539,7 @@ private:
 
 public:
     CScriptCheck()
-        : amount(), ptxTo(0), nIn(0), nFlags(0), cacheStore(false),
+        : amount(), ptxTo(nullptr), nIn(0), nFlags(0), cacheStore(false),
           error(SCRIPT_ERR_UNKNOWN_ERROR), txdata() {}
 
     CScriptCheck(const CScript &scriptPubKeyIn, const Amount amountIn,
@@ -667,6 +663,16 @@ bool UnparkBlockAndChildren(CBlockIndex *pindex);
 
 /** Remove parked status from a block. */
 bool UnparkBlock(CBlockIndex *pindex);
+
+/**
+ * Retrieve the topmost finalized block.
+ */
+const CBlockIndex *GetFinalizedBlock();
+
+/**
+ * Checks if a block is finalized.
+ */
+bool IsBlockFinalized(const CBlockIndex *pindex);
 
 /** The currently-connected chain of blocks (protected by cs_main). */
 extern CChain chainActive;

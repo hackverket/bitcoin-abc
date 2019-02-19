@@ -3,10 +3,9 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the parckblock and unparkblock RPC calls."""
-import os
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, connect_nodes_bi, sync_blocks, wait_until
+from test_framework.util import assert_equal, wait_until
 
 
 class ParkedChainTest(BitcoinTestFramework):
@@ -25,7 +24,13 @@ class ParkedChainTest(BitcoinTestFramework):
                 assert_equal(tip["status"], other_tip_status)
 
     def run_test(self):
+        def wait_for_tip(node, tip):
+            def check_tip():
+                return node.getbestblockhash() == tip
+            wait_until(check_tip)
+
         node = self.nodes[0]
+        parking_node = self.nodes[1]
 
         self.log.info("Test chain parking...")
         node.generate(10)
@@ -34,6 +39,11 @@ class ParkedChainTest(BitcoinTestFramework):
         block_to_park = node.getbestblockhash()
         node.generate(10)
         parked_tip = node.getbestblockhash()
+
+        # get parking_node caught up.
+        # (probably not needed, but just in case parking can have race
+        # condition like invalidateblock below)
+        wait_for_tip(parking_node, parked_tip)
 
         # Let's park the chain.
         assert(parked_tip != tip)
@@ -59,6 +69,9 @@ class ParkedChainTest(BitcoinTestFramework):
         node.generate(1)
         good_tip = node.getbestblockhash()
 
+        # avoid race condition from parking_node requesting block when invalid
+        wait_for_tip(parking_node, good_tip)
+
         node.invalidateblock(bad_tip)
         self.only_valid_tip(tip, other_tip_status="invalid")
         node.parkblock(bad_tip)
@@ -75,6 +88,9 @@ class ParkedChainTest(BitcoinTestFramework):
         bad_tip = node.getbestblockhash()
         node.generate(1)
         good_tip = node.getbestblockhash()
+
+        # avoid race condition from parking_node requesting block when invalid
+        wait_for_tip(parking_node, good_tip)
 
         node.parkblock(bad_tip)
         self.only_valid_tip(tip, other_tip_status="parked")
@@ -96,6 +112,9 @@ class ParkedChainTest(BitcoinTestFramework):
         node.generate(1)
         good_tip = node.getbestblockhash()
 
+        # avoid race condition from parking_node requesting block when invalid
+        wait_for_tip(parking_node, good_tip)
+
         node.invalidateblock(bad_tip)
         self.only_valid_tip(tip, other_tip_status="invalid")
         node.parkblock(bad_tip)
@@ -113,6 +132,9 @@ class ParkedChainTest(BitcoinTestFramework):
         node.generate(1)
         good_tip = node.getbestblockhash()
 
+        # avoid race condition from parking_node requesting block when invalid
+        wait_for_tip(parking_node, good_tip)
+
         node.parkblock(bad_tip)
         self.only_valid_tip(tip, other_tip_status="parked")
         node.invalidateblock(bad_tip)
@@ -125,11 +147,8 @@ class ParkedChainTest(BitcoinTestFramework):
         node.reconsiderblock(bad_tip)
         self.only_valid_tip(good_tip)
 
-        # First, make sure both nodes are in sync.
-        parking_node = self.nodes[1]
-        connect_nodes_bi(self.nodes, 0, 1)
-        sync_blocks(self.nodes[0:2])
-
+        # To get ready for next testset, make sure both nodes are in sync.
+        wait_for_tip(parking_node, good_tip)
         assert_equal(node.getbestblockhash(), parking_node.getbestblockhash())
 
         # Wait for node 1 to park the chain.

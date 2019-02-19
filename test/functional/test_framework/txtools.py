@@ -3,12 +3,11 @@ from .mininode import CTransaction, FromHex, ToHex, CTxOut
 from .script import OP_RETURN, CScript
 
 import random
-from binascii import hexlify, unhexlify
 
 
 def pad_tx(tx, pad_to_size=MIN_TX_SIZE):
     """
-    Pad a transaction with op_return junk data until it is at least pad_to_size, or 
+    Pad a transaction with op_return junk data until it is at least pad_to_size, or
     leave it alone if it's already bigger than that.
     """
     curr_size = len(tx.serialize())
@@ -53,7 +52,7 @@ def pad_tx(tx, pad_to_size=MIN_TX_SIZE):
             padding = random.randrange(
                 1 << 8 * padding_len - 2, 1 << 8 * padding_len - 1)
             tx.vout.append(
-                CTxOut(0, CScript([padding, OP_RETURN])))
+                CTxOut(0, CScript([OP_RETURN, padding])))
 
         curr_size = len(tx.serialize())
         required_padding = pad_to_size - curr_size

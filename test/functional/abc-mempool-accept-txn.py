@@ -15,7 +15,6 @@ from test_framework.blocktools import *
 import time
 from test_framework.key import CECKey
 from test_framework.script import *
-import struct
 from test_framework.cdefs import MAX_STANDARD_TX_SIGOPS
 
 # Error for too many sigops in one TX
@@ -60,8 +59,7 @@ class FullBlockTest(ComparisonTestFramework):
     def run_test(self):
         self.test = TestManager(self, self.options.tmpdir)
         self.test.add_all_connections(self.nodes)
-        # Start up network handling in another thread
-        NetworkThread().start()
+        network_thread_start()
         self.test.run()
 
     def add_transactions_to_block(self, block, tx_list):
