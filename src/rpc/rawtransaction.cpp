@@ -1257,11 +1257,11 @@ static UniValue validaterawtransaction(const Config &config,
         fHaveChain = !existingCoin.IsSpent();
     }
     UniValue result(UniValue::VOBJ);
-    bool fHaveMempool = mempool.exists(txid);
+    bool fHaveMempool = g_mempool.exists(txid);
     if (!fHaveMempool && !fHaveChain) {
         CValidationState state;
         bool fMissingInputs;
-        result = VerifyTransactionWithMemoryPool(config, mempool, state, std::move(tx),
+        result = VerifyTransactionWithMemoryPool(config, g_mempool, state, std::move(tx),
                                 fLimitFree, &fMissingInputs, false,
                                 nMaxRawTxFee);
         /*
